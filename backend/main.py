@@ -103,6 +103,10 @@ def get_smtp_config():
     return smtp_host, smtp_port, smtp_user, smtp_password, smtp_from
 
 
+class EmailDeliveryError(Exception):
+    pass
+
+
 def cloudvault_email_html(title: str, body: str, button_text: str = None, button_url: str = None, code: str = None) -> str:
     button_html = ""
     if button_text and button_url:
@@ -156,20 +160,49 @@ def send_email(to_email: str, subject: str, text_body: str, html_body: str):
     smtp_host, smtp_port, smtp_user, smtp_password, smtp_from = get_smtp_config()
     if not smtp_host or not smtp_user or not smtp_password:
         print(f"Email not sent to {to_email}: {subject}\n{text_body}")
+        if os.getenv("EMAIL_DEV_MODE", "false").lower() == "true":
+            return
+        raise EmailDeliveryError("SMTP is not configured")
+
+    smtp_timeout = int(os.getenv("SMTP_TIMEOUT", "15"))
+    use_ssl = os.getenv("SMTP_SSL", "false").lower() == "true" or smtp_port == 465
+    use_tls = os.getenv("SMTP_TLS", "true").lower() == "true"
+
+    if use_ssl:
+        smtp_client = smtplib.SMTP_SSL
+    else:
+        smtp_client = smtplib.SMTP
+
+    try:
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = smtp_from
+        message["To"] = to_email
+        message.set_content(text_body)
+        message.add_alternative(html_body, subtype="html")
+
+        with smtp_client(smtp_host, smtp_port, timeout=smtp_timeout) as server:
+            if use_tls and not use_ssl:
+                server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.send_message(message)
+    except (OSError, smtplib.SMTPException) as exc:
+        print(f"Email delivery failed to {to_email}: {subject} ({type(exc).__name__}: {exc})")
+        raise EmailDeliveryError("Email service is unavailable") from exc
+
+
+def raise_email_unavailable():
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Email service is currently unavailable. Please try again later."
+    )
+
+
+def try_send_optional_email(send_func, *args):
+    try:
+        send_func(*args)
+    except EmailDeliveryError:
         return
-
-    message = EmailMessage()
-    message["Subject"] = subject
-    message["From"] = smtp_from
-    message["To"] = to_email
-    message.set_content(text_body)
-    message.add_alternative(html_body, subtype="html")
-
-    with smtplib.SMTP(smtp_host, smtp_port) as server:
-        if os.getenv("SMTP_TLS", "true").lower() == "true":
-            server.starttls()
-        server.login(smtp_user, smtp_password)
-        server.send_message(message)
 
 
 def send_reset_email(to_email: str, reset_url: str):
@@ -280,7 +313,7 @@ def register(user: UserRegister, db: Session = Depends(get_db)):
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    send_welcome_email(new_user.email, new_user.username)
+    try_send_optional_email(send_welcome_email, new_user.email, new_user.username)
     
     access_token = create_access_token(data={"user_id": new_user.id})
     return Token(access_token=access_token, token_type="bearer")
@@ -294,7 +327,15 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
     
     otp = create_login_otp(db, db_user)
     db.commit()
-    send_otp_email(db_user.email, otp)
+    try:
+        send_otp_email(db_user.email, otp)
+    except EmailDeliveryError:
+        db.query(LoginOTP).filter(
+            LoginOTP.user_id == db_user.id,
+            LoginOTP.used_at.is_(None)
+        ).update({LoginOTP.used_at: func.now()})
+        db.commit()
+        raise_email_unavailable()
     return LoginOTPResponse(
         otp_required=True,
         email=db_user.email,
@@ -332,7 +373,7 @@ def verify_login_otp(data: VerifyOTPRequest, db: Session = Depends(get_db)):
 
     otp_record.used_at = func.now()
     db.commit()
-    send_new_login_email(user.email)
+    try_send_optional_email(send_new_login_email, user.email)
     access_token = create_access_token(data={"user_id": user.id})
     return Token(access_token=access_token, token_type="bearer")
 
@@ -354,7 +395,15 @@ def resend_login_otp(data: ResendOTPRequest, db: Session = Depends(get_db)):
 
     otp = create_login_otp(db, user)
     db.commit()
-    send_otp_email(user.email, otp)
+    try:
+        send_otp_email(user.email, otp)
+    except EmailDeliveryError:
+        db.query(LoginOTP).filter(
+            LoginOTP.user_id == user.id,
+            LoginOTP.used_at.is_(None)
+        ).update({LoginOTP.used_at: func.now()})
+        db.commit()
+        raise_email_unavailable()
     return MessageResponse(message="A new verification code has been sent.")
 
 
@@ -373,7 +422,10 @@ def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
         db.commit()
 
         frontend_url = os.getenv("FRONTEND_URL", "http://127.0.0.1:5173").rstrip("/")
-        send_reset_email(user.email, f"{frontend_url}/reset-password?token={token}")
+        try:
+            send_reset_email(user.email, f"{frontend_url}/reset-password?token={token}")
+        except EmailDeliveryError:
+            print(f"Password reset email could not be delivered to {user.email}")
 
     return MessageResponse(message="If an account exists, a reset link has been sent.")
 
@@ -411,7 +463,7 @@ def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
     user.hashed_password = hash_password(data.new_password)
     reset_token.used_at = func.now()
     db.commit()
-    send_password_changed_email(user.email)
+    try_send_optional_email(send_password_changed_email, user.email)
     return MessageResponse(message="Password reset successfully")
 
 
@@ -837,7 +889,7 @@ def change_password(data: ChangePassword, current_user: User = Depends(get_curre
     
     current_user.hashed_password = hash_password(data.new_password)
     db.commit()
-    send_password_changed_email(current_user.email)
+    try_send_optional_email(send_password_changed_email, current_user.email)
     return MessageResponse(message="Password changed successfully")
 
 
