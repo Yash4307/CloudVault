@@ -15,6 +15,30 @@ class UserLogin(BaseModel):
     password: str
 
 
+class LoginOTPResponse(BaseModel):
+    otp_required: bool
+    email: EmailStr
+    message: str
+
+
+class VerifyOTPRequest(BaseModel):
+    email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6)
+
+
+class ResendOTPRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=6)
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str
@@ -67,6 +91,35 @@ class FileRename(BaseModel):
     new_name: str
 
 
+class ShareLinkOut(BaseModel):
+    token: str
+    url: str
+    expires_at: Optional[datetime] = None
+
+
+class SharedFileOut(BaseModel):
+    name: str
+    original_name: str
+    file_type: str
+    file_size: int
+    created_at: datetime
+
+
+class FileTrashOut(BaseModel):
+    id: int
+    name: str
+    original_name: str
+    file_type: str
+    file_size: int
+    folder_id: Optional[int] = None
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 # ============ Folder Schemas ============
 class FolderCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
@@ -88,11 +141,30 @@ class FolderRename(BaseModel):
 
 
 # ============ Dashboard Schemas ============
+class StorageCategory(BaseModel):
+    category: str
+    bytes: int
+    count: int
+
+
+class ActivityOut(BaseModel):
+    id: int
+    action: str
+    item_name: str
+    item_type: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class DashboardStats(BaseModel):
     total_files: int
     total_folders: int
     total_storage: int  # in bytes
     recent_files: list[FileOut] = []
+    storage_by_type: list[StorageCategory] = []
+    activities: list[ActivityOut] = []
 
 
 # ============ Common Schemas ============

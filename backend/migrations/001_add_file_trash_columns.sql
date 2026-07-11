@@ -1,0 +1,6 @@
+ALTER TABLE files
+    ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS ix_files_user_deleted
+    ON files (user_id, is_deleted);
