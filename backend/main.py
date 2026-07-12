@@ -104,14 +104,14 @@ def get_smtp_config():
     return smtp_host, smtp_port, smtp_user, smtp_password, smtp_from
 
 
-def get_mailersend_sender():
-    raw_sender = os.getenv("MAILERSEND_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_FROM", "")
+def get_brevo_sender():
+    raw_sender = os.getenv("BREVO_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_FROM", "")
     sender_name, sender_email = parseaddr(raw_sender)
     if not sender_email and raw_sender and "@" in raw_sender:
         sender_email = raw_sender.strip()
-    sender_name = os.getenv("MAILERSEND_FROM_NAME", sender_name or "CloudVault")
+    sender_name = os.getenv("BREVO_FROM_NAME", sender_name or "CloudVault")
     if not sender_email:
-        raise EmailDeliveryError("MAILERSEND_FROM_EMAIL is not configured")
+        raise EmailDeliveryError("BREVO_FROM_EMAIL is not configured")
     return sender_email, sender_name
 
 
@@ -169,16 +169,16 @@ def cloudvault_email_html(title: str, body: str, button_text: str = None, button
 
 
 def send_email(to_email: str, subject: str, text_body: str, html_body: str):
-    mailersend_api_key = os.getenv("MAILERSEND_API_KEY")
-    if mailersend_api_key:
+    brevo_api_key = os.getenv("BREVO_API_KEY")
+    if brevo_api_key:
         try:
-            send_email_with_mailersend(mailersend_api_key, to_email, subject, text_body, html_body)
+            send_email_with_brevo(brevo_api_key, to_email, subject, text_body, html_body)
             return
         except EmailDeliveryError:
             smtp_host, _, _, _, _ = get_smtp_config()
             if not smtp_host:
                 raise
-            print("MailerSend delivery failed; falling back to configured SMTP provider")
+            print("Brevo delivery failed; falling back to configured SMTP provider")
 
     send_email_with_smtp(to_email, subject, text_body, html_body)
 
@@ -222,11 +222,11 @@ def send_email_with_smtp(to_email: str, subject: str, text_body: str, html_body:
         raise EmailDeliveryError("Email service is unavailable") from exc
 
 
-def send_email_with_mailersend(api_key: str, to_email: str, subject: str, text_body: str, html_body: str):
-    from_email, from_name = get_mailersend_sender()
+def send_email_with_brevo(api_key: str, to_email: str, subject: str, text_body: str, html_body: str):
+    from_email, from_name = get_brevo_sender()
     timeout = int(os.getenv("EMAIL_API_TIMEOUT", "15"))
     payload = {
-        "from": {
+        "sender": {
             "email": from_email,
             "name": from_name,
         },
@@ -236,15 +236,16 @@ def send_email_with_mailersend(api_key: str, to_email: str, subject: str, text_b
             }
         ],
         "subject": subject,
-        "text": text_body,
-        "html": html_body,
+        "textContent": text_body,
+        "htmlContent": html_body,
     }
 
     try:
         response = httpx.post(
-            "https://api.mailersend.com/v1/email",
+            "https://api.brevo.com/v3/smtp/email",
             headers={
-                "Authorization": f"Bearer {api_key}",
+                "api-key": api_key,
+                "accept": "application/json",
                 "Content-Type": "application/json",
             },
             json=payload,
@@ -253,11 +254,11 @@ def send_email_with_mailersend(api_key: str, to_email: str, subject: str, text_b
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         response_text = exc.response.text[:500] if exc.response is not None else ""
-        print(f"MailerSend delivery failed to {to_email}: {subject} ({exc.response.status_code}: {response_text})")
-        raise EmailDeliveryError("MailerSend rejected the email request") from exc
+        print(f"Brevo delivery failed to {to_email}: {subject} ({exc.response.status_code}: {response_text})")
+        raise EmailDeliveryError("Brevo rejected the email request") from exc
     except httpx.HTTPError as exc:
-        print(f"MailerSend delivery failed to {to_email}: {subject} ({type(exc).__name__}: {exc})")
-        raise EmailDeliveryError("MailerSend is unavailable") from exc
+        print(f"Brevo delivery failed to {to_email}: {subject} ({type(exc).__name__}: {exc})")
+        raise EmailDeliveryError("Brevo is unavailable") from exc
 
 
 def raise_email_unavailable():
