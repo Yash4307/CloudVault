@@ -8,7 +8,9 @@ from datetime import datetime, timedelta
 import os
 import secrets
 import smtplib
+import httpx
 from email.message import EmailMessage
+from email.utils import parseaddr
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
@@ -48,7 +50,6 @@ allowed_origins = [
     if origin.strip()
 ]
 
-# CORS middleware
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -101,6 +102,17 @@ def get_smtp_config():
     smtp_password = os.getenv("SMTP_PASSWORD")
     smtp_from = os.getenv("SMTP_FROM", smtp_user or "noreply@cloudvault.local")
     return smtp_host, smtp_port, smtp_user, smtp_password, smtp_from
+
+
+def get_mailersend_sender():
+    raw_sender = os.getenv("MAILERSEND_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_FROM", "")
+    sender_name, sender_email = parseaddr(raw_sender)
+    if not sender_email and raw_sender and "@" in raw_sender:
+        sender_email = raw_sender.strip()
+    sender_name = os.getenv("MAILERSEND_FROM_NAME", sender_name or "CloudVault")
+    if not sender_email:
+        raise EmailDeliveryError("MAILERSEND_FROM_EMAIL is not configured")
+    return sender_email, sender_name
 
 
 class EmailDeliveryError(Exception):
@@ -157,6 +169,21 @@ def cloudvault_email_html(title: str, body: str, button_text: str = None, button
 
 
 def send_email(to_email: str, subject: str, text_body: str, html_body: str):
+    mailersend_api_key = os.getenv("MAILERSEND_API_KEY")
+    if mailersend_api_key:
+        try:
+            send_email_with_mailersend(mailersend_api_key, to_email, subject, text_body, html_body)
+            return
+        except EmailDeliveryError:
+            smtp_host, _, _, _, _ = get_smtp_config()
+            if not smtp_host:
+                raise
+            print("MailerSend delivery failed; falling back to configured SMTP provider")
+
+    send_email_with_smtp(to_email, subject, text_body, html_body)
+
+
+def send_email_with_smtp(to_email: str, subject: str, text_body: str, html_body: str):
     smtp_host, smtp_port, smtp_user, smtp_password, smtp_from = get_smtp_config()
     if not smtp_host or not smtp_user or not smtp_password:
         print(f"Email not sent to {to_email}: {subject}\n{text_body}")
@@ -193,6 +220,44 @@ def send_email(to_email: str, subject: str, text_body: str, html_body: str):
             f"to {to_email}: {subject} ({type(exc).__name__}: {exc})"
         )
         raise EmailDeliveryError("Email service is unavailable") from exc
+
+
+def send_email_with_mailersend(api_key: str, to_email: str, subject: str, text_body: str, html_body: str):
+    from_email, from_name = get_mailersend_sender()
+    timeout = int(os.getenv("EMAIL_API_TIMEOUT", "15"))
+    payload = {
+        "from": {
+            "email": from_email,
+            "name": from_name,
+        },
+        "to": [
+            {
+                "email": to_email,
+            }
+        ],
+        "subject": subject,
+        "text": text_body,
+        "html": html_body,
+    }
+
+    try:
+        response = httpx.post(
+            "https://api.mailersend.com/v1/email",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        response_text = exc.response.text[:500] if exc.response is not None else ""
+        print(f"MailerSend delivery failed to {to_email}: {subject} ({exc.response.status_code}: {response_text})")
+        raise EmailDeliveryError("MailerSend rejected the email request") from exc
+    except httpx.HTTPError as exc:
+        print(f"MailerSend delivery failed to {to_email}: {subject} ({type(exc).__name__}: {exc})")
+        raise EmailDeliveryError("MailerSend is unavailable") from exc
 
 
 def raise_email_unavailable():
