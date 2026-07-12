@@ -187,7 +187,11 @@ def send_email(to_email: str, subject: str, text_body: str, html_body: str):
             server.login(smtp_user, smtp_password)
             server.send_message(message)
     except (OSError, smtplib.SMTPException) as exc:
-        print(f"Email delivery failed to {to_email}: {subject} ({type(exc).__name__}: {exc})")
+        print(
+            "Email delivery failed "
+            f"via {smtp_host}:{smtp_port} ssl={use_ssl} tls={use_tls} "
+            f"to {to_email}: {subject} ({type(exc).__name__}: {exc})"
+        )
         raise EmailDeliveryError("Email service is unavailable") from exc
 
 
