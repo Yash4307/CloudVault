@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 import os
 import secrets
 import smtplib
-import httpx
 from email.message import EmailMessage
 from jose import JWTError, jwt
 from pydantic import BaseModel
@@ -104,16 +103,6 @@ def get_smtp_config():
     return smtp_host, smtp_port, smtp_user, smtp_password, smtp_from
 
 
-def get_from_email():
-    return (
-        os.getenv("RESEND_FROM_EMAIL")
-        or os.getenv("EMAIL_FROM")
-        or os.getenv("SMTP_FROM")
-        or os.getenv("SMTP_EMAIL")
-        or "CloudVault <onboarding@resend.dev>"
-    )
-
-
 class EmailDeliveryError(Exception):
     pass
 
@@ -168,11 +157,6 @@ def cloudvault_email_html(title: str, body: str, button_text: str = None, button
 
 
 def send_email(to_email: str, subject: str, text_body: str, html_body: str):
-    resend_api_key = os.getenv("RESEND_API_KEY")
-    if resend_api_key:
-        send_email_with_resend(resend_api_key, to_email, subject, text_body, html_body)
-        return
-
     smtp_host, smtp_port, smtp_user, smtp_password, smtp_from = get_smtp_config()
     if not smtp_host or not smtp_user or not smtp_password:
         print(f"Email not sent to {to_email}: {subject}\n{text_body}")
@@ -204,36 +188,6 @@ def send_email(to_email: str, subject: str, text_body: str, html_body: str):
             server.send_message(message)
     except (OSError, smtplib.SMTPException) as exc:
         print(f"Email delivery failed to {to_email}: {subject} ({type(exc).__name__}: {exc})")
-        raise EmailDeliveryError("Email service is unavailable") from exc
-
-
-def send_email_with_resend(api_key: str, to_email: str, subject: str, text_body: str, html_body: str):
-    timeout = int(os.getenv("EMAIL_API_TIMEOUT", "15"))
-    payload = {
-        "from": get_from_email(),
-        "to": [to_email],
-        "subject": subject,
-        "html": html_body,
-        "text": text_body,
-    }
-
-    try:
-        response = httpx.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=timeout,
-        )
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        response_text = exc.response.text[:500] if exc.response is not None else ""
-        print(f"Resend delivery failed to {to_email}: {subject} ({exc.response.status_code}: {response_text})")
-        raise EmailDeliveryError("Email service rejected the request") from exc
-    except httpx.HTTPError as exc:
-        print(f"Resend delivery failed to {to_email}: {subject} ({type(exc).__name__}: {exc})")
         raise EmailDeliveryError("Email service is unavailable") from exc
 
 
