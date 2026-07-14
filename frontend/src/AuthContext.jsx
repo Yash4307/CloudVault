@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { loginUser, registerUser, getProfile, verifyLoginOtp } from './api';
+import { loginUser, registerUser, getProfile } from './api';
 import AuthContext from './auth-context';
 
 export const AuthProvider = ({ children }) => {
@@ -33,24 +33,13 @@ export const AuthProvider = ({ children }) => {
     setError(null);
     try {
       const response = await loginUser({ email, password });
-      return { otpRequired: true, email: response.data.email, message: response.data.message };
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Login failed');
-      return null;
-    }
-  };
-
-  const verifyOtp = async (email, otp) => {
-    setError(null);
-    try {
-      const response = await verifyLoginOtp({ email, otp });
       localStorage.setItem('token', response.data.access_token);
       setLoading(true);
       await fetchProfile();
       setLoading(false);
       return true;
     } catch (err) {
-      setError(err.response?.data?.detail || 'OTP verification failed');
+      setError(err.response?.data?.detail || 'Login failed');
       return false;
     }
   };
@@ -76,7 +65,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, error, login, verifyOtp, register, logout }}>
+    <AuthContext.Provider value={{ user, loading, error, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   );

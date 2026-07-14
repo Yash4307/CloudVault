@@ -7,24 +7,18 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 import os
 import secrets
-import smtplib
-import httpx
-from email.message import EmailMessage
-from email.utils import parseaddr
-from jose import JWTError, jwt
 from pydantic import BaseModel
 
 from database import engine, get_db, Base
-from models import User, File as FileModel, Folder, PasswordResetToken, SharedLink, LoginOTP, Activity
+from models import User, File as FileModel, Folder, SharedLink, Activity
 from schemas import (
-    UserRegister, UserLogin, LoginOTPResponse, VerifyOTPRequest, ResendOTPRequest,
-    ForgotPasswordRequest, ResetPasswordRequest, Token, UserOut, UserProfile,
+    UserRegister, UserLogin, Token, UserOut, UserProfile,
     FileOut, FileRename, FileTrashOut, FolderCreate, FolderOut, FolderRename,
     DashboardStats, MessageResponse, ShareLinkOut, SharedFileOut
 )
 from auth import (
     hash_password, verify_password, create_access_token,
-    get_current_user, SECRET_KEY, ALGORITHM
+    get_current_user
 )
 from storage import upload_file, download_file, delete_file, ensure_bucket_exists
 
@@ -95,275 +89,6 @@ def file_category(file_type: str) -> str:
     return "Others"
 
 
-def get_smtp_config():
-    smtp_host = os.getenv("SMTP_SERVER") or os.getenv("SMTP_HOST")
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user = os.getenv("SMTP_EMAIL") or os.getenv("SMTP_USERNAME")
-    smtp_password = os.getenv("SMTP_PASSWORD")
-    smtp_from = os.getenv("SMTP_FROM", smtp_user or "noreply@cloudvault.local")
-    return smtp_host, smtp_port, smtp_user, smtp_password, smtp_from
-
-
-def get_brevo_sender():
-    raw_sender = os.getenv("BREVO_FROM_EMAIL") or os.getenv("EMAIL_FROM") or os.getenv("SMTP_FROM", "")
-    sender_name, sender_email = parseaddr(raw_sender)
-    if not sender_email and raw_sender and "@" in raw_sender:
-        sender_email = raw_sender.strip()
-    sender_name = os.getenv("BREVO_FROM_NAME", sender_name or "CloudVault")
-    if not sender_email:
-        raise EmailDeliveryError("BREVO_FROM_EMAIL is not configured")
-    return sender_email, sender_name
-
-
-class EmailDeliveryError(Exception):
-    pass
-
-
-def cloudvault_email_html(title: str, body: str, button_text: str = None, button_url: str = None, code: str = None) -> str:
-    button_html = ""
-    if button_text and button_url:
-        button_html = f"""
-          <a href="{button_url}" style="display:inline-block;margin-top:22px;padding:13px 22px;background:#4f46e5;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:700;">
-            {button_text}
-          </a>
-        """
-    code_html = ""
-    if code:
-        code_html = f"""
-          <div style="margin:24px 0;padding:18px;background:#eef2ff;border-radius:10px;text-align:center;font-size:30px;letter-spacing:8px;font-weight:800;color:#3730a3;">
-            {code}
-          </div>
-        """
-    return f"""
-    <!doctype html>
-    <html>
-      <body style="margin:0;background:#f8fafc;font-family:Inter,Arial,sans-serif;color:#111827;">
-        <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#f8fafc;padding:32px 16px;">
-          <tr>
-            <td align="center">
-              <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:560px;background:#ffffff;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;">
-                <tr>
-                  <td style="padding:24px 28px;background:linear-gradient(135deg,#4f46e5,#0891b2);color:#ffffff;">
-                    <div style="font-size:22px;font-weight:800;">CloudVault</div>
-                    <div style="font-size:13px;opacity:.85;margin-top:4px;">Secure cloud storage</div>
-                  </td>
-                </tr>
-                <tr>
-                  <td style="padding:30px 28px;">
-                    <h1 style="font-size:24px;line-height:1.25;margin:0 0 12px;color:#111827;">{title}</h1>
-                    <p style="font-size:15px;line-height:1.7;margin:0;color:#4b5563;">{body}</p>
-                    {code_html}
-                    {button_html}
-                    <p style="font-size:12px;line-height:1.6;color:#6b7280;margin-top:28px;">
-                      If you did not request this, you can safely ignore this email.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-        </table>
-      </body>
-    </html>
-    """
-
-
-def send_email(to_email: str, subject: str, text_body: str, html_body: str):
-    brevo_api_key = os.getenv("BREVO_API_KEY")
-    if brevo_api_key:
-        try:
-            send_email_with_brevo(brevo_api_key, to_email, subject, text_body, html_body)
-            return
-        except EmailDeliveryError:
-            smtp_host, _, _, _, _ = get_smtp_config()
-            if not smtp_host:
-                raise
-            print("Brevo delivery failed; falling back to configured SMTP provider")
-
-    send_email_with_smtp(to_email, subject, text_body, html_body)
-
-
-def send_email_with_smtp(to_email: str, subject: str, text_body: str, html_body: str):
-    smtp_host, smtp_port, smtp_user, smtp_password, smtp_from = get_smtp_config()
-    if not smtp_host or not smtp_user or not smtp_password:
-        print(f"Email not sent to {to_email}: {subject}\n{text_body}")
-        if os.getenv("EMAIL_DEV_MODE", "false").lower() == "true":
-            return
-        raise EmailDeliveryError("SMTP is not configured")
-
-    smtp_timeout = int(os.getenv("SMTP_TIMEOUT", "15"))
-    use_ssl = os.getenv("SMTP_SSL", "false").lower() == "true" or smtp_port == 465
-    use_tls = os.getenv("SMTP_TLS", "true").lower() == "true"
-
-    if use_ssl:
-        smtp_client = smtplib.SMTP_SSL
-    else:
-        smtp_client = smtplib.SMTP
-
-    try:
-        message = EmailMessage()
-        message["Subject"] = subject
-        message["From"] = smtp_from
-        message["To"] = to_email
-        message.set_content(text_body)
-        message.add_alternative(html_body, subtype="html")
-
-        with smtp_client(smtp_host, smtp_port, timeout=smtp_timeout) as server:
-            if use_tls and not use_ssl:
-                server.starttls()
-            server.login(smtp_user, smtp_password)
-            server.send_message(message)
-    except (OSError, smtplib.SMTPException) as exc:
-        print(
-            "Email delivery failed "
-            f"via {smtp_host}:{smtp_port} ssl={use_ssl} tls={use_tls} "
-            f"to {to_email}: {subject} ({type(exc).__name__}: {exc})"
-        )
-        raise EmailDeliveryError("Email service is unavailable") from exc
-
-
-def send_email_with_brevo(api_key: str, to_email: str, subject: str, text_body: str, html_body: str):
-    from_email, from_name = get_brevo_sender()
-    timeout = int(os.getenv("EMAIL_API_TIMEOUT", "15"))
-    payload = {
-        "sender": {
-            "email": from_email,
-            "name": from_name,
-        },
-        "to": [
-            {
-                "email": to_email,
-            }
-        ],
-        "subject": subject,
-        "textContent": text_body,
-        "htmlContent": html_body,
-    }
-
-    try:
-        response = httpx.post(
-            "https://api.brevo.com/v3/smtp/email",
-            headers={
-                "api-key": api_key,
-                "accept": "application/json",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=timeout,
-        )
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        response_text = exc.response.text[:500] if exc.response is not None else ""
-        print(f"Brevo delivery failed to {to_email}: {subject} ({exc.response.status_code}: {response_text})")
-        raise EmailDeliveryError("Brevo rejected the email request") from exc
-    except httpx.HTTPError as exc:
-        print(f"Brevo delivery failed to {to_email}: {subject} ({type(exc).__name__}: {exc})")
-        raise EmailDeliveryError("Brevo is unavailable") from exc
-
-
-def raise_email_unavailable():
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Email service is currently unavailable. Please try again later."
-    )
-
-
-def try_send_optional_email(send_func, *args):
-    try:
-        send_func(*args)
-    except EmailDeliveryError:
-        return
-
-
-def send_reset_email(to_email: str, reset_url: str):
-    send_email(
-        to_email,
-        "Reset your CloudVault password",
-        f"Reset your CloudVault password using this link. It expires in 15 minutes:\n\n{reset_url}",
-        cloudvault_email_html(
-            "Reset your password",
-            "We received a request to reset your CloudVault password. This link expires in 15 minutes and can be used once.",
-            "Reset Password",
-            reset_url
-        )
-    )
-
-
-def send_otp_email(to_email: str, otp: str):
-    send_email(
-        to_email,
-        "Your CloudVault login code",
-        f"Your CloudVault login code is {otp}. It expires in 5 minutes.",
-        cloudvault_email_html(
-            "Your login verification code",
-            "Enter this 6-digit code to finish signing in to CloudVault. The code expires in 5 minutes.",
-            code=otp
-        )
-    )
-
-
-def send_password_changed_email(to_email: str):
-    send_email(
-        to_email,
-        "Your CloudVault password was changed",
-        "Your CloudVault password was changed successfully.",
-        cloudvault_email_html(
-            "Password changed",
-            "Your CloudVault password was changed successfully. If this was not you, reset your password immediately."
-        )
-    )
-
-
-def send_new_login_email(to_email: str):
-    login_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    send_email(
-        to_email,
-        "New CloudVault login detected",
-        f"A new login to your CloudVault account was detected at {login_time}.",
-        cloudvault_email_html(
-            "New login detected",
-            f"A new login to your CloudVault account was completed at {login_time}. If this was you, no action is needed."
-        )
-    )
-
-
-def send_welcome_email(to_email: str, username: str):
-    send_email(
-        to_email,
-        "Welcome to CloudVault",
-        f"Welcome to CloudVault, {username}.",
-        cloudvault_email_html(
-            "Welcome to CloudVault",
-            f"Hi {username}, your CloudVault account is ready. You can now upload, organize, share, and recover your files securely."
-        )
-    )
-
-
-def create_reset_jwt(user_id: int, jti: str) -> str:
-    payload = {
-        "user_id": user_id,
-        "jti": jti,
-        "purpose": "password_reset",
-        "exp": datetime.utcnow() + timedelta(minutes=15),
-    }
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-
-
-def create_login_otp(db: Session, user: User) -> str:
-    otp = f"{secrets.randbelow(1000000):06d}"
-    db.query(LoginOTP).filter(
-        LoginOTP.user_id == user.id,
-        LoginOTP.used_at.is_(None)
-    ).update({LoginOTP.used_at: func.now()})
-    db.add(LoginOTP(
-        otp_hash=hash_password(otp),
-        user_id=user.id,
-        attempts=0,
-        expires_at=datetime.utcnow() + timedelta(minutes=5)
-    ))
-    return otp
-
-
 # ============ Auth Routes ============
 @app.post("/register", response_model=Token)
 def register(user: UserRegister, db: Session = Depends(get_db)):
@@ -383,158 +108,19 @@ def register(user: UserRegister, db: Session = Depends(get_db)):
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    try_send_optional_email(send_welcome_email, new_user.email, new_user.username)
     
     access_token = create_access_token(data={"user_id": new_user.id})
     return Token(access_token=access_token, token_type="bearer")
 
 
-@app.post("/login", response_model=LoginOTPResponse)
+@app.post("/login", response_model=Token)
 def login(user: UserLogin, db: Session = Depends(get_db)):
     db_user = db.query(User).filter(User.email == user.email).first()
     if not db_user or not verify_password(user.password, db_user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
     
-    otp = create_login_otp(db, db_user)
-    db.commit()
-    try:
-        send_otp_email(db_user.email, otp)
-    except EmailDeliveryError:
-        db.query(LoginOTP).filter(
-            LoginOTP.user_id == db_user.id,
-            LoginOTP.used_at.is_(None)
-        ).update({LoginOTP.used_at: func.now()})
-        db.commit()
-        raise_email_unavailable()
-    return LoginOTPResponse(
-        otp_required=True,
-        email=db_user.email,
-        message="Verification code sent to your email."
-    )
-
-
-@app.post("/login/verify-otp", response_model=Token)
-def verify_login_otp(data: VerifyOTPRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.email).first()
-    if not user:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
-
-    otp_record = db.query(LoginOTP).filter(
-        LoginOTP.user_id == user.id,
-        LoginOTP.used_at.is_(None)
-    ).order_by(desc(LoginOTP.created_at)).first()
-    if not otp_record:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
-
-    now = datetime.now(otp_record.expires_at.tzinfo) if otp_record.expires_at.tzinfo else datetime.utcnow()
-    if otp_record.expires_at < now:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code expired")
-    if otp_record.attempts >= 3:
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many attempts. Please resend a new code.")
-
-    if not verify_password(data.otp, otp_record.otp_hash):
-        otp_record.attempts += 1
-        if otp_record.attempts >= 3:
-            otp_record.used_at = func.now()
-        db.commit()
-        if otp_record.attempts >= 3:
-            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many attempts. Please resend a new code.")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
-
-    otp_record.used_at = func.now()
-    db.commit()
-    try_send_optional_email(send_new_login_email, user.email)
-    access_token = create_access_token(data={"user_id": user.id})
+    access_token = create_access_token(data={"user_id": db_user.id})
     return Token(access_token=access_token, token_type="bearer")
-
-
-@app.post("/login/resend-otp", response_model=MessageResponse)
-def resend_login_otp(data: ResendOTPRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.email).first()
-    if not user:
-        return MessageResponse(message="If the account exists, a new code has been sent.")
-
-    latest_otp = db.query(LoginOTP).filter(
-        LoginOTP.user_id == user.id
-    ).order_by(desc(LoginOTP.created_at)).first()
-    if latest_otp:
-        now = datetime.now(latest_otp.created_at.tzinfo) if latest_otp.created_at and latest_otp.created_at.tzinfo else datetime.utcnow()
-        elapsed = (now - latest_otp.created_at.replace(tzinfo=None) if latest_otp.created_at.tzinfo is None else now - latest_otp.created_at).total_seconds()
-        if elapsed < 30:
-            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Please wait before requesting another code")
-
-    otp = create_login_otp(db, user)
-    db.commit()
-    try:
-        send_otp_email(user.email, otp)
-    except EmailDeliveryError:
-        db.query(LoginOTP).filter(
-            LoginOTP.user_id == user.id,
-            LoginOTP.used_at.is_(None)
-        ).update({LoginOTP.used_at: func.now()})
-        db.commit()
-        raise_email_unavailable()
-    return MessageResponse(message="A new verification code has been sent.")
-
-
-@app.post("/forgot-password", response_model=MessageResponse)
-def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.email).first()
-    if user:
-        jti = secrets.token_urlsafe(16)
-        token = create_reset_jwt(user.id, jti)
-        reset_token = PasswordResetToken(
-            token=jti,
-            user_id=user.id,
-            expires_at=datetime.utcnow() + timedelta(minutes=15)
-        )
-        db.add(reset_token)
-        db.commit()
-
-        frontend_url = os.getenv("FRONTEND_URL", "http://127.0.0.1:5173").rstrip("/")
-        try:
-            send_reset_email(user.email, f"{frontend_url}/reset-password?token={token}")
-        except EmailDeliveryError:
-            print(f"Password reset email could not be delivered to {user.email}")
-
-    return MessageResponse(message="If an account exists, a reset link has been sent.")
-
-
-@app.post("/reset-password", response_model=MessageResponse)
-def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
-    try:
-        payload = jwt.decode(data.token, SECRET_KEY, algorithms=[ALGORITHM])
-    except JWTError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link")
-
-    if payload.get("purpose") != "password_reset":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link")
-
-    user_id = payload.get("user_id")
-    jti = payload.get("jti")
-    if not user_id or not jti:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link")
-
-    reset_token = db.query(PasswordResetToken).filter(
-        PasswordResetToken.token == jti,
-        PasswordResetToken.used_at.is_(None)
-    ).first()
-    if not reset_token:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link")
-
-    now = datetime.now(reset_token.expires_at.tzinfo) if reset_token.expires_at.tzinfo else datetime.utcnow()
-    if reset_token.expires_at < now:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link")
-
-    user = db.query(User).filter(User.id == user_id, User.id == reset_token.user_id).first()
-    if not user:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link")
-
-    user.hashed_password = hash_password(data.new_password)
-    reset_token.used_at = func.now()
-    db.commit()
-    try_send_optional_email(send_password_changed_email, user.email)
-    return MessageResponse(message="Password reset successfully")
 
 
 # ============ User Routes ============
@@ -959,7 +545,6 @@ def change_password(data: ChangePassword, current_user: User = Depends(get_curre
     
     current_user.hashed_password = hash_password(data.new_password)
     db.commit()
-    try_send_optional_email(send_password_changed_email, current_user.email)
     return MessageResponse(message="Password changed successfully")
 
 

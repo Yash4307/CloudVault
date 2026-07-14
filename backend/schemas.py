@@ -15,30 +15,6 @@ class UserLogin(BaseModel):
     password: str
 
 
-class LoginOTPResponse(BaseModel):
-    otp_required: bool
-    email: EmailStr
-    message: str
-
-
-class VerifyOTPRequest(BaseModel):
-    email: EmailStr
-    otp: str = Field(..., min_length=6, max_length=6)
-
-
-class ResendOTPRequest(BaseModel):
-    email: EmailStr
-
-
-class ForgotPasswordRequest(BaseModel):
-    email: EmailStr
-
-
-class ResetPasswordRequest(BaseModel):
-    token: str
-    new_password: str = Field(..., min_length=6)
-
-
 class Token(BaseModel):
     access_token: str
     token_type: str

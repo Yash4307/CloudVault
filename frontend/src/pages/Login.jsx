@@ -15,12 +15,9 @@ const Login = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
-    const result = await login(email, password);
+    const success = await login(email, password);
     setIsSubmitting(false);
-    if (result?.otpRequired) {
-      sessionStorage.setItem('pendingOtpEmail', result.email);
-      navigate('/verify-otp', { state: { email: result.email } });
-    }
+    if (success) navigate('/dashboard');
   };
 
   return (
@@ -70,12 +67,7 @@ const Login = () => {
             </label>
 
             <label className="block">
-              <span className="mb-2 flex items-center justify-between text-sm font-medium text-gray-700 dark:text-gray-300">
-                Password
-                <Link to="/forgot-password" className="text-xs font-semibold text-indigo-700 hover:text-indigo-500 dark:text-cyan-300">
-                  Forgot password?
-                </Link>
-              </span>
+              <span className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Password</span>
               <PasswordField value={password} onChange={(e) => setPassword(e.target.value)} />
             </label>
 

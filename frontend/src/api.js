@@ -19,10 +19,6 @@ API.interceptors.request.use((config) => {
 // ============ Auth API ============
 export const registerUser = (data) => API.post('/register', data);
 export const loginUser = (data) => API.post('/login', data);
-export const verifyLoginOtp = (data) => API.post('/login/verify-otp', data);
-export const resendLoginOtp = (data) => API.post('/login/resend-otp', data);
-export const forgotPassword = (data) => API.post('/forgot-password', data);
-export const resetPassword = (data) => API.post('/reset-password', data);
 
 // ============ User API ============
 export const getProfile = () => API.get('/profile');

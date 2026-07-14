@@ -5,9 +5,6 @@ import { ToastProvider } from './components/Toast';
 import ThemeProvider from './ThemeProvider';
 import Login from './pages/Login';
 import Register from './pages/Register';
-import ForgotPassword from './pages/ForgotPassword';
-import ResetPassword from './pages/ResetPassword';
-import VerifyOtp from './pages/VerifyOtp';
 import SharedFile from './pages/SharedFile';
 import Dashboard from './pages/Dashboard';
 import Files from './pages/Files';
@@ -36,10 +33,6 @@ function App() {
             <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
-              <Route path="/forgot-password" element={<ForgotPassword />} />
-              <Route path="/verify-otp" element={<VerifyOtp />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
-              <Route path="/reset-password/:token" element={<ResetPassword />} />
               <Route path="/share/:token" element={<SharedFile />} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/files" element={<ProtectedRoute><Files /></ProtectedRoute>} />
