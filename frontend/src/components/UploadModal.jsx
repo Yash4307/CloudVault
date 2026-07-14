@@ -1,6 +1,8 @@
 import { useState, useRef, useCallback } from 'react';
 import { useToast } from './Toast';
 
+const MAX_FILE_SIZE = 50 * 1024 * 1024;
+
 const UploadModal = ({ onUpload, onClose }) => {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -24,8 +26,11 @@ const UploadModal = ({ onUpload, onClose }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (selectedFiles.length === 0) return;
-    const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
-    if (totalSize > 50 * 1024 * 1024) { addToast('Total size exceeds 50MB', 'error'); return; }
+    const oversizedFile = selectedFiles.find((file) => file.size > MAX_FILE_SIZE);
+    if (oversizedFile) {
+      addToast(`${oversizedFile.name} is larger than the 50MB limit`, 'error');
+      return;
+    }
 
     setUploading(true);
     setProgress(0);
@@ -37,12 +42,16 @@ const UploadModal = ({ onUpload, onClose }) => {
         await onUpload(processedFiles[i]);
         uploaded++;
         setProgress(Math.round((uploaded / processedFiles.length) * 100));
-      } catch (err) { addToast(`Failed: ${processedFiles[i].name}`, 'error'); }
+      } catch (err) {
+        addToast(`${processedFiles[i].name}: ${err.message || 'Upload failed'}`, 'error');
+      }
     }
 
     setUploading(false);
-    addToast(`${uploaded} file(s) uploaded!`, 'success');
-    setTimeout(() => onClose(), 500);
+    if (uploaded > 0) {
+      addToast(`${uploaded} file(s) uploaded!`, 'success');
+      setTimeout(() => onClose(), 500);
+    }
   };
 
   const handleDragEnter = useCallback((e) => { e.preventDefault(); setIsDragging(true); }, []);

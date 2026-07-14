@@ -43,17 +43,13 @@ allowed_origins = [
     for origin in os.getenv("ALLOWED_ORIGINS", os.getenv("FRONTEND_URL", "")).split(",")
     if origin.strip()
 ]
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024
 
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        "https://cloudvault18.vercel.app",
-    ],
+    allow_origins=list(dict.fromkeys(default_origins + allowed_origins)),
+    allow_origin_regex=os.getenv("CORS_ORIGIN_REGEX", r"https://.*\.vercel\.app"),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -160,8 +156,8 @@ async def upload_file_route(
     db: Session = Depends(get_db)
 ):
     file_data = await file.read()
-    if len(file_data) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File size exceeds 10MB limit")
+    if len(file_data) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File size exceeds 50MB limit")
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     file_path = f"{current_user.id}/{timestamp}_{file.filename}"
@@ -343,16 +339,22 @@ def restore_file(file_id: int, current_user: User = Depends(get_current_user), d
 def permanent_delete_file(file_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     file_record = db.query(FileModel).filter(
         FileModel.id == file_id,
-        FileModel.user_id == current_user.id
+        FileModel.user_id == current_user.id,
+        FileModel.is_deleted == True
     ).first()
     if not file_record:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found in trash")
     
     try:
         delete_file(file_record.file_path)
     except Exception as e:
         print(f"Warning: Could not delete from storage: {str(e)}")
     
+    db.query(SharedLink).filter(SharedLink.file_id == file_record.id).delete(synchronize_session=False)
+    db.query(Activity).filter(Activity.file_id == file_record.id).update(
+        {Activity.file_id: None},
+        synchronize_session=False
+    )
     log_activity(db, current_user.id, "permanently deleted", file_record.name, "file")
     db.delete(file_record)
     db.commit()

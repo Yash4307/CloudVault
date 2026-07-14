@@ -95,32 +95,33 @@ git switch smtp-feature
 
 ## Screenshots
 
-Add screenshots to `docs/screenshots/` and reference them here. Suggested screenshots:
+### Login
 
-- Login page
-- Register page
-- Dashboard
-- File browser
-- Upload modal
-- File preview
-- Shared file page
-- Trash page
-- Profile page
+![CloudVault login page](docs/Screenshots/login.png)
 
-Recommended structure:
+### Register
 
-```text
-docs/
-└── screenshots/
-    ├── login.png
-    ├── dashboard.png
-    ├── files.png
-    ├── upload.png
-    ├── preview.png
-    ├── sharing.png
-    ├── trash.png
-    └── profile.png
-```
+![CloudVault registration page](docs/Screenshots/register.png)
+
+### Dashboard
+
+![CloudVault dashboard](docs/Screenshots/dashboard.png)
+
+### Files
+
+![CloudVault file browser](docs/Screenshots/files.png)
+
+### Trash
+
+![CloudVault trash bin](docs/Screenshots/trashbin.png)
+
+### Settings / Profile
+
+![CloudVault settings page](docs/Screenshots/settings.png)
+
+### Light Mode
+
+![CloudVault light mode](docs/Screenshots/lightmode.png)
 
 ## Tech Stack
 

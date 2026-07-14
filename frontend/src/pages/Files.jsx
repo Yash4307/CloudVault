@@ -50,10 +50,10 @@ const Files = () => {
     formData.append('file', file);
     try {
       await uploadFile(formData, folderId || null);
-      addToast('File uploaded successfully!', 'success');
       setRefresh((r) => r + 1);
-      setShowUpload(false);
-    } catch { addToast('Upload failed', 'error'); }
+    } catch (err) {
+      throw new Error(err.response?.data?.detail || 'Upload failed');
+    }
   };
 
   const handleDeleteFile = async (fileId) => {
