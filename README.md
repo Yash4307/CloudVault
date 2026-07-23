@@ -43,6 +43,7 @@ git switch smtp-feature
 - Authenticated API access using bearer tokens
 - Profile page with account and storage statistics
 - Change password from the profile page
+- Delete account flow with username confirmation
 
 ### File Management
 
@@ -210,6 +211,7 @@ CloudVault/
 - `POST /login` - login and receive JWT
 - `GET /profile` - get profile and storage stats
 - `PUT /profile/change-password` - update password
+- `DELETE /profile/delete-account` - permanently delete the authenticated account and owned data
 
 ### Files
 
@@ -361,6 +363,7 @@ The `frontend/vercel.json` file includes SPA rewrites so direct routes such as `
 - JWT protects private API routes.
 - Supabase Storage bucket is private.
 - File and folder operations are scoped to the authenticated user.
+- Account deletion requires exact username confirmation and removes owned files, folders, shared links, activity history, storage objects, and account data.
 - `.env`, virtual environments, cache folders, `node_modules`, and build output are ignored by Git.
 - Secrets should be configured only through local `.env` files or deployment provider environment variables.
 
