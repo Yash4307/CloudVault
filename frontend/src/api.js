@@ -22,6 +22,7 @@ export const loginUser = (data) => API.post('/login', data);
 
 // ============ User API ============
 export const getProfile = () => API.get('/profile');
+export const deleteAccount = (data) => API.delete('/profile/delete-account', { data });
 
 // ============ File API ============
 export const uploadFile = (formData, folderId) =>
@@ -32,12 +33,12 @@ export const uploadFile = (formData, folderId) =>
 
 export const getFiles = (params) => API.get('/files', { params });
 export const getFile = (fileId) => API.get(`/files/${fileId}`);
-export const downloadFile = (fileId) => API.get(`/files/${fileId}/download`);
+export const downloadFile = (fileId) => API.get(`/files/${fileId}/download`, { responseType: 'blob' });
 export const renameFile = (fileId, data) => API.put(`/files/${fileId}/rename`, data);
 export const deleteFile = (fileId) => API.delete(`/files/${fileId}`);
 export const createShareLink = (fileId) => API.post(`/files/${fileId}/share`);
 export const getSharedFile = (token) => API.get(`/share/${token}`);
-export const downloadSharedFile = (token) => API.get(`/share/${token}/download`);
+export const downloadSharedFile = (token) => API.get(`/share/${token}/download`, { responseType: 'blob' });
 
 // ============ Folder API ============
 export const createFolder = (data) => API.post('/folders', data);

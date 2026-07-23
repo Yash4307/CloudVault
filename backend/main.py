@@ -1,5 +1,5 @@
 from sqlalchemy import func
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Query, status
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, asc, or_
@@ -7,12 +7,13 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 import os
 import secrets
+from urllib.parse import quote
 from pydantic import BaseModel
 
 from database import engine, get_db, Base
 from models import User, File as FileModel, Folder, SharedLink, Activity
 from schemas import (
-    UserRegister, UserLogin, Token, UserOut, UserProfile,
+    UserRegister, UserLogin, DeleteAccountRequest, Token, UserOut, UserProfile,
     FileOut, FileRename, FileTrashOut, FolderCreate, FolderOut, FolderRename,
     DashboardStats, MessageResponse, ShareLinkOut, SharedFileOut
 )
@@ -53,6 +54,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 # ============ Startup ============
@@ -80,9 +82,30 @@ def file_category(file_type: str) -> str:
         return "Images"
     if file_type.startswith("video/"):
         return "Videos"
-    if file_type.startswith("text/") or file_type == "application/pdf" or "document" in file_type or "word" in file_type:
+    if (
+        file_type.startswith("text/")
+        or file_type == "application/pdf"
+        or "document" in file_type
+        or "word" in file_type
+        or "presentation" in file_type
+        or "powerpoint" in file_type
+        or "spreadsheet" in file_type
+        or "excel" in file_type
+    ):
         return "Documents"
     return "Others"
+
+
+def file_download_response(file_record: FileModel, file_data: bytes) -> Response:
+    filename = file_record.original_name or file_record.name
+    encoded_filename = quote(filename)
+    return Response(
+        content=file_data,
+        media_type=file_record.file_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+        }
+    )
 
 
 # ============ Auth Routes ============
@@ -276,11 +299,7 @@ def download_file_route(file_id: int, current_user: User = Depends(get_current_u
     
     try:
         file_data = download_file(file_record.file_path)
-        return {
-            "filename": file_record.original_name,
-            "content_type": file_record.file_type,
-            "data": file_data.hex()
-        }
+        return file_download_response(file_record, file_data)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Download failed: {str(e)}")
 
@@ -523,11 +542,7 @@ def download_shared_file(token: str, db: Session = Depends(get_db)):
 
     try:
         file_data = download_file(file_record.file_path)
-        return {
-            "filename": file_record.original_name,
-            "content_type": file_record.file_type,
-            "data": file_data.hex()
-        }
+        return file_download_response(file_record, file_data)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Download failed: {str(e)}")
 
@@ -548,6 +563,51 @@ def change_password(data: ChangePassword, current_user: User = Depends(get_curre
     current_user.hashed_password = hash_password(data.new_password)
     db.commit()
     return MessageResponse(message="Password changed successfully")
+
+
+@app.delete("/profile/delete-account", response_model=MessageResponse)
+def delete_account(
+    data: DeleteAccountRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if data.username != user.username:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username does not match")
+
+    user_files = db.query(FileModel).filter(FileModel.user_id == user.id).all()
+    failed_paths = []
+    for file_record in user_files:
+        try:
+            delete_file(file_record.file_path)
+        except Exception as exc:
+            failed_paths.append(file_record.file_path)
+            print(f"Account deletion storage cleanup failed for {file_record.file_path}: {exc}")
+
+    if failed_paths:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Account deletion failed while removing stored files"
+        )
+
+    try:
+        db.query(SharedLink).filter(SharedLink.user_id == user.id).delete(synchronize_session=False)
+        db.query(Activity).filter(Activity.user_id == user.id).delete(synchronize_session=False)
+        db.query(FileModel).filter(FileModel.user_id == user.id).delete(synchronize_session=False)
+        db.query(Folder).filter(Folder.user_id == user.id).delete(synchronize_session=False)
+        db.delete(user)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        print(f"Account deletion database cleanup failed for user {user.id}: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Account deletion failed while removing account data"
+        )
+
+    return MessageResponse(message="Account permanently deleted")
 
 
 # ============ Health Check ============

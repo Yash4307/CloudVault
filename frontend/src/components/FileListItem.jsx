@@ -1,30 +1,23 @@
 import { useState } from 'react';
 import { createShareLink, downloadFile, renameFile } from '../api';
 import FilePreview from './FilePreview';
-
-const formatBytes = (bytes) => {
-  if (!bytes) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-};
+import { formatBytes, getFileBadge, getFilenameFromDisposition } from '../utils/fileTypes';
 
 const FileListItem = ({ file, isLast, onDelete, onRefresh }) => {
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(file.name);
   const [showPreview, setShowPreview] = useState(false);
   const [shareUrl, setShareUrl] = useState('');
+  const badge = getFileBadge(file);
 
   const handleDownload = async () => {
     try {
       const response = await downloadFile(file.id);
-      const byteArray = new Uint8Array(response.data.data.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
-      const blob = new Blob([byteArray], { type: file.file_type });
+      const blob = new Blob([response.data], { type: file.file_type });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = file.original_name;
+      link.download = getFilenameFromDisposition(response.headers['content-disposition'], file.original_name);
       document.body.appendChild(link);
       link.click();
       URL.revokeObjectURL(url);
@@ -62,7 +55,7 @@ const FileListItem = ({ file, isLast, onDelete, onRefresh }) => {
     <>
       <div className={`group flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-gray-700/30 ${!isLast ? 'border-b border-gray-50 dark:border-gray-700' : ''}`}>
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <button onClick={() => setShowPreview(true)} className="rounded-lg bg-gray-100 px-2 py-1 text-xs font-bold text-gray-700 dark:bg-gray-700 dark:text-gray-200">FILE</button>
+          <button onClick={() => setShowPreview(true)} className={`rounded-lg px-2 py-1 text-xs font-bold ${badge.bg}`}>{badge.label}</button>
           <div className="min-w-0 flex-1">
             {isRenaming ? (
               <div className="flex gap-1">

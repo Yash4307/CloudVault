@@ -1,25 +1,7 @@
 import { useState } from 'react';
 import { createShareLink, downloadFile, renameFile } from '../api';
 import FilePreview from './FilePreview';
-
-const formatBytes = (bytes) => {
-  if (!bytes) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-};
-
-const getFileBadge = (type) => {
-  if (type?.startsWith('image/')) return { label: 'IMG', bg: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300' };
-  if (type === 'application/pdf') return { label: 'PDF', bg: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' };
-  if (type?.startsWith('video/')) return { label: 'VID', bg: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' };
-  if (type?.startsWith('audio/')) return { label: 'AUD', bg: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' };
-  if (type?.includes('zip') || type?.includes('rar') || type?.includes('7z')) return { label: 'ZIP', bg: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' };
-  if (type?.includes('sheet') || type?.includes('excel')) return { label: 'XLS', bg: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' };
-  if (type?.includes('word') || type?.includes('document')) return { label: 'DOC', bg: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' };
-  return { label: 'FILE', bg: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200' };
-};
+import { formatBytes, getFileBadge, getFilenameFromDisposition } from '../utils/fileTypes';
 
 const FileCard = ({ file, onDelete, onRefresh }) => {
   const [isRenaming, setIsRenaming] = useState(false);
@@ -27,17 +9,16 @@ const FileCard = ({ file, onDelete, onRefresh }) => {
   const [showPreview, setShowPreview] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [shareUrl, setShareUrl] = useState('');
-  const badge = getFileBadge(file.file_type);
+  const badge = getFileBadge(file);
 
   const handleDownload = async () => {
     try {
       const response = await downloadFile(file.id);
-      const byteArray = new Uint8Array(response.data.data.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
-      const blob = new Blob([byteArray], { type: file.file_type });
+      const blob = new Blob([response.data], { type: file.file_type });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = file.original_name;
+      link.download = getFilenameFromDisposition(response.headers['content-disposition'], file.original_name);
       document.body.appendChild(link);
       link.click();
       window.URL.revokeObjectURL(url);

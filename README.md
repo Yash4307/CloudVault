@@ -56,6 +56,7 @@ git switch smtp-feature
 - Permanently delete files
 - File metadata display: name, size, type, and date
 - File type icons for common formats
+- 50 MB per-file upload limit
 
 ### Folder Management
 
@@ -72,6 +73,25 @@ git switch smtp-feature
 - Public read-only share links
 - Shared file view route
 - Shared file download route
+
+## Supported Files
+
+CloudVault accepts all file types as long as each file is within the 50 MB upload limit. The UI detects common formats for badges and preview behavior:
+
+| Category | Examples | UI Badge |
+| --- | --- | --- |
+| Images | PNG, JPG, GIF, SVG, WebP | `IMG` / `SVG` |
+| PDF | PDF documents | `PDF` |
+| Archives | ZIP, RAR, 7z, TAR, GZ | `ZIP` |
+| Video | MP4, WebM, MOV, AVI, MKV | `VID` |
+| Audio | MP3, WAV, OGG, M4A, FLAC | `AUD` |
+| Word | DOC, DOCX, ODT | `DOC` |
+| Excel | XLS, XLSX, ODS, CSV | `XLS` |
+| PowerPoint | PPT, PPTX, ODP | `PPT` |
+| Text / Code | TXT, JSON, XML, CSV, MD, HTML, CSS, JS | `TXT` |
+| Other | Any other file type | `FILE` |
+
+Preview is available for images, PDFs, and text/code-like files. Other file types can still be uploaded, shared, and downloaded.
 
 ### Dashboard
 

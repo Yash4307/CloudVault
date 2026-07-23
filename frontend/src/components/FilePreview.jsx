@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { downloadFile } from '../api';
+import { isTextFile } from '../utils/fileTypes';
 
 const FilePreview = ({ file, onClose }) => {
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -14,8 +15,7 @@ const FilePreview = ({ file, onClose }) => {
   const loadPreview = async () => {
     try {
       const response = await downloadFile(file.id);
-      const byteArray = new Uint8Array(response.data.data.match(/.{1,2}/g).map(b => parseInt(b, 16)));
-      const blob = new Blob([byteArray], { type: file.file_type });
+      const blob = new Blob([response.data], { type: file.file_type });
       setPreviewUrl(URL.createObjectURL(blob));
     } catch (err) { setError('Failed to load preview'); }
     finally { setLoading(false); }
@@ -23,7 +23,7 @@ const FilePreview = ({ file, onClose }) => {
 
   const isImage = file.file_type?.startsWith('image/');
   const isPDF = file.file_type === 'application/pdf';
-  const isText = file.file_type?.startsWith('text/');
+  const isText = isTextFile(file.file_type, file.name);
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in" onClick={onClose}>

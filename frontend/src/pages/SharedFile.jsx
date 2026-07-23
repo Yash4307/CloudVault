@@ -1,14 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { downloadSharedFile, getSharedFile } from '../api';
-
-const formatBytes = (bytes) => {
-  if (!bytes) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const index = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, index)).toFixed(1))} ${sizes[index]}`;
-};
+import { formatBytes, getFilenameFromDisposition, isPreviewableFile, isTextFile } from '../utils/fileTypes';
 
 const SharedFile = () => {
   const { token } = useParams();
@@ -24,14 +17,9 @@ const SharedFile = () => {
         const metadata = await getSharedFile(token);
         setFile(metadata.data);
 
-        if (
-          metadata.data.file_type?.startsWith('image/') ||
-          metadata.data.file_type === 'application/pdf' ||
-          metadata.data.file_type?.startsWith('text/')
-        ) {
+        if (isPreviewableFile(metadata.data)) {
           const response = await downloadSharedFile(token);
-          const byteArray = new Uint8Array(response.data.data.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
-          const blob = new Blob([byteArray], { type: response.data.content_type });
+          const blob = new Blob([response.data], { type: metadata.data.file_type });
           objectUrl = URL.createObjectURL(blob);
           setPreviewUrl(objectUrl);
         }
@@ -50,12 +38,11 @@ const SharedFile = () => {
 
   const handleDownload = async () => {
     const response = await downloadSharedFile(token);
-    const byteArray = new Uint8Array(response.data.data.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
-    const blob = new Blob([byteArray], { type: response.data.content_type });
+    const blob = new Blob([response.data], { type: file.file_type });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = response.data.filename;
+    link.download = getFilenameFromDisposition(response.headers['content-disposition'], file.original_name || file.name);
     document.body.appendChild(link);
     link.click();
     URL.revokeObjectURL(url);
@@ -94,7 +81,7 @@ const SharedFile = () => {
               {previewUrl && file.file_type === 'application/pdf' && (
                 <iframe src={previewUrl} className="h-[70vh] w-full rounded-lg" title={file.name} />
               )}
-              {previewUrl && file.file_type?.startsWith('text/') && (
+              {previewUrl && isTextFile(file.file_type, file.name) && (
                 <iframe src={previewUrl} className="h-[60vh] w-full rounded-lg border border-gray-200 dark:border-gray-700" title={file.name} />
               )}
               {!previewUrl && (

@@ -15,6 +15,10 @@ class UserLogin(BaseModel):
     password: str
 
 
+class DeleteAccountRequest(BaseModel):
+    username: str
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str
